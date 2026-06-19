@@ -1,13 +1,9 @@
-//마스터 수정코드 리니어 초기화 초반부 포함
-
 #include <Wire.h>
 #include <AccelStepper.h>
 
 // ----- 스테퍼 모터 핀 설정 -----
-// Stepper 1: Step(5), Dir(6)
-AccelStepper stepper1(1, 5, 6); 
-// Stepper 2: Step(9), Dir(10)
-AccelStepper stepper2(1, 9, 10); 
+AccelStepper stepper1(1, 5, 6); // Stepper 1: Step(5), Dir(6)
+AccelStepper stepper2(1, 9, 10); // Stepper 2: Step(9), Dir(10)
 
 // ----- 슬레이브 주소 설정 -----
 #define ADDR_LINEAR 9
@@ -15,8 +11,17 @@ AccelStepper stepper2(1, 9, 10);
 #define ADDR_SOLENOID 10
 
 // ----- 스테퍼 2 구동 설정 -----
-const long midpoint = 44000;  // 솔레노이드 작동 지점
-const long endpoint = 88000; // 최종 도착 지점
+const long midpoint = 44000;  
+const long endpoint = 88000; 
+
+// ----- mm 단위를 스텝 수로 변환하기 위한 상수 -----
+const float MM_TO_STEPS = 100.0; // 기구부 사정에 맞게 조절 (1mm당 스텝 수)
+
+// ----- 항상 대기할 초기 위치 높이 상수 (mm 단위) -----
+// 0을 넣으면 리드스크류 맨 꼭대기가 초기 대기 위치가 됩니다.
+// 만약 꼭대기에서 30mm 내려온 곳에서 항상 대기하길 원하면 30을 적으시면 됩니다.
+const int START_HEIGHT_MM = 0; 
+const long START_HEIGHT_STEPS = START_HEIGHT_MM * MM_TO_STEPS;
 
 // 함수 선언
 bool sendCommandAndWait(int addr, char cmd);
@@ -36,7 +41,7 @@ void setup() {
   stepper2.setAcceleration(500);
   stepper2.setPinsInverted(true, true, false); 
 
-  // 💡 [핵심 추가] 시스템 켜지자마자 리니어 액추에이터 초기화 구동 및 대기
+  // [초기화] 리니어 액추에이터 초기화 구동 및 대기
   Serial.println("System Initialization: Homing Linear Actuator...");
   if (sendCommandAndWait(ADDR_LINEAR, 'I')) {
     Serial.println("--> Linear Actuator Position Initialized Successfully!");
@@ -44,20 +49,31 @@ void setup() {
     Serial.println("--> [Warning] Linear Actuator Init Failed.");
   }
 
+  // 켜지자마자 소프트웨어적으로 설정한 초기 대기 높이(START_HEIGHT_STEPS)로 모터 좌표 세팅
+  stepper1.setCurrentPosition(START_HEIGHT_STEPS);
+  stepper2.setCurrentPosition(0);
+
   delay(500);
-  Serial.println("System Ready. Enter Height:");
+  Serial.println("=====================================================================");
+  Serial.print("System Ready. 지정된 초기 대기 높이: "); Serial.print(START_HEIGHT_MM); Serial.println(" mm");
+  Serial.println("[주의] 전원을 켜기 전, 모터1을 이 대기 높이 위치에 수동으로 맞춰주세요.");
+  Serial.println("=====================================================================");
 }
 
 void loop() {
   if (Serial.available()) {
-    long height = Serial.parseInt(); 
-    if (height == 0) return; 
+    // 파이썬 웹캠 코드에서 계산되어 넘어온 '400 - 리드스크류 타겟 값'(mm)을 수신
+    long targetMm = Serial.parseInt(); 
+    if (targetMm <= 0) return; 
     
-    Serial.print("Height Received: "); Serial.println(height);
+    Serial.print("Calculated Drop Distance Received: "); Serial.print(targetMm); Serial.println(" mm");
     
-    // [Step 1] Stepper 1 구동
-    Serial.println("Step 1: Stepper 1 Moving...");
-    stepper1.moveTo(height); 
+    // mm 단위를 실제 모터 스텝 수로 환산
+    long targetSteps = targetMm * MM_TO_STEPS;
+    
+    // [Step 1] Stepper 1이 파이썬이 준 값(목표 높이)으로 이동
+    Serial.print("Step 1: Stepper 1 Moving to "); Serial.print(targetSteps); Serial.println(" steps...");
+    stepper1.moveTo(targetSteps); 
     while (stepper1.distanceToGo() != 0) {
       stepper1.run();
     }
@@ -75,12 +91,10 @@ void loop() {
             Serial.println("Step 4: Stepper 2 Moving to Midpoint & Resetting Linear...");
             stepper2.moveTo(midpoint); 
 
-            // 스테퍼 모터가 돌기 직전에 리니어 액추에이터로 'I' 신호 발송
             Wire.beginTransmission(ADDR_LINEAR);
             Wire.write('I');
             Wire.endTransmission();
 
-            // 리니어가 초기화되는 동안 스테퍼 2는 중간 지점으로 이동
             while (stepper2.distanceToGo() != 0) {
               stepper2.run();
             }
@@ -100,33 +114,35 @@ void loop() {
             }
 
             // [Step 7] 전체 완료 및 슬레이브 리셋
-            Serial.println("Step 7: All Sequence Done. Resetting Slaves and Homing Steppers...");
+            Serial.println("Step 7: All Sequence Done. Homing Steppers to CONSTANT Start Position...");
             resetAllSlaves(); 
             
-            // 모터를 물리적으로 맨 처음 위치(0)로 돌려보냄
-            stepper2.moveTo(0);
+            // 0이 아니라 상수로 지정해 둔 초기 대기 위치(START_HEIGHT_STEPS)로 복귀 명령
+            stepper1.moveTo(START_HEIGHT_STEPS);
+            stepper2.moveTo(0); // 스텝모터2는 기존대로 0(출발점)으로 복귀
             
-            // 두 모터가 모두 0 위치에 도달할 때까지 회전
-            while (stepper2.distanceToGo() != 0) {
+            // 두 모터가 각각 지정된 초기 대기 위치에 도달할 때까지 동시에 회전
+            while (stepper1.distanceToGo() != 0 || stepper2.distanceToGo() != 0) {
+              stepper1.run();
               stepper2.run();
             }
             
-            // 원점 복귀 완료 후 내부 좌표를 0으로 확실히 초기화
+            // 확실하게 좌표 일치를 위해 현재 위치 재선언
+            stepper1.setCurrentPosition(START_HEIGHT_STEPS);
             stepper2.setCurrentPosition(0);
+            Serial.println("--> Stepper 1 & 2 returned to constant start position safely.");
         }
     }
     Serial.println("\n--- Cycle Finished. Waiting for next height ---");
   }
 }
 
-// 슬레이브 상태 확인 함수
+// 슬레이브 상태 확인 함수 (기존 유지)
 bool sendCommandAndWait(int addr, char cmd) {
   Wire.beginTransmission(addr);
   Wire.write(cmd);
   Wire.endTransmission();
-
   delay(200); 
-
   while (true) {
     Wire.requestFrom(addr, 1);
     if (Wire.available()) {
@@ -140,7 +156,7 @@ bool sendCommandAndWait(int addr, char cmd) {
   }
 }
 
-// 모든 슬레이브 리셋 함수
+// 모든 슬레이브 리셋 함수 (기존 유지)
 void resetAllSlaves() {
   int addrs[] = {ADDR_LINEAR, ADDR_SERVO, ADDR_SOLENOID};
   for (int i = 0; i < 3; i++) {
