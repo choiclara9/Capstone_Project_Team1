@@ -1,0 +1,101 @@
+#include <Wire.h>
+#include <Servo.h>
+
+Servo s[4]; 
+
+volatile char status = 'W'; // 초기 상태를 대기(W)로 시작 (setup에서 초기화하므로)
+
+// ----- 서보모터 핀 번호 설정 -----
+const int servoPins[4] = {3, 5, 9, 10}; 
+
+// ----- 각 서보모터별 맞춤 초기 각도(영점) 설정 -----
+const int startAngles[4] = {0, 0, 0, 0}; 
+
+const int targetGroup1 = 120; // 0, 1번 모터 이동 각도
+const int targetGroup2 = 90;  // 2, 3번 모터 이동 각도
+
+void setup() {
+  delay(1000);
+
+  Wire.begin(8);
+  Wire.onReceive(receiveEvent);
+  Wire.onRequest(requestEvent);
+  
+  // 튀는 현상 방지를 위해 write를 attach보다 먼저 수행
+  for(int i = 0; i < 4; i++) {
+    s[i].write(startAngles[i]); // 먼저 시작 각도를 강제로 지정
+    s[i].attach(servoPins[i]);  // 그 뒤에 핀을 활성화
+    delay(200);                 // 모터가 제자리로 찾아갈 수 있는 물리적 시간 확보
+  }
+  
+  Serial.begin(115200);
+  Serial.println("Servo Slave Ready.");
+}
+
+void loop() {
+  // ----------------------------------------------------
+  // 1. 마스터로부터 구동 명령('G')을 받았을 때
+  // ----------------------------------------------------
+  if (status == 'G') {
+    Serial.println("Servo Sequence Start");
+    status = 'R'; // 마스터가 'D'를 성급하게 채가지 못하도록 동작 중('R') 상태로 임시 변경
+
+    // [Step 1] 첫 번째 그룹 (0, 1번) 120도 회전
+    Serial.println("-> Group 1 (0, 1) Moving to Goal");
+    s[0].write(startAngles[0] + targetGroup1); 
+    s[1].write(startAngles[1] + targetGroup1);
+    delay(1000); 
+
+    // [Step 2] 첫 번째 그룹 복귀
+    Serial.println("-> Group 1 (0, 1) Returning to Start");
+    s[0].write(startAngles[0]); 
+    s[1].write(startAngles[1]);
+    delay(1000); 
+    
+    // [Step 3] 두 번째 그룹 (2, 3번) 90도 회전
+    Serial.println("-> Group 2 (2, 3) Moving to Goal");
+    s[2].write(startAngles[2] + targetGroup2); 
+    s[3].write(startAngles[3] + targetGroup2);
+    delay(1000); 
+    
+    // [Step 4] 두 번째 그룹 복귀
+    Serial.println("-> Group 2 (2, 3) Returning to Start");
+    s[2].write(startAngles[2]); 
+    s[3].write(startAngles[3]);
+    delay(1000); // 확실하게 복귀할 수 있도록 시간 확보 
+
+    // 모든 시퀀스가 완벽히 끝난 후에 완료('D')를 넘겨줍니다.
+    status = 'D'; 
+    Serial.println("Servo Sequence Done. Status set to D.");
+  }
+  
+  // ----------------------------------------------------
+  // 2. 마스터로부터 초기화 명령('I')을 받았을 때
+  // ----------------------------------------------------
+  if (status == 'I') {
+    Serial.println("Servo Reset Command Received.");
+    for(int i = 0; i < 4; i++) {
+      s[i].write(startAngles[i]);
+    }
+    status = 'W'; // 초기화 후 다음 사이클을 위해 대기('W') 상태로 변경
+    Serial.println("Servo Reset Complete. Waiting for next cycle...");
+  }
+}
+
+// ----- I2C 통신 데이터 수신 (마스터 -> 슬레이브) -----
+void receiveEvent(int howMany) { 
+  if(Wire.available()) {
+    char c = Wire.read();
+    
+    // 현재 서보가 한창 돌고 있는 중('R')이라면 마스터의 중간 명령 무시
+    if (status == 'R' && (c == 'G' || c == 'I')) {
+      return; 
+    }
+    status = c; 
+  }
+}
+
+// ----- I2C 통신 데이터 요청 응답 (슬레이브 -> 마스터) -----
+void requestEvent() { 
+  Wire.write(status); // 현재 실시간 상태(W, R, D, I 등)를 마스터에게 그대로 전송
+}
