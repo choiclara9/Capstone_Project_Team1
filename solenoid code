@@ -1,0 +1,48 @@
+#include <Wire.h>
+
+const int solPin = 8;     // 솔레노이드 제어 핀 (릴레이 또는 MOSFET 연결)
+volatile char status = 'I'; // I: Idle(대기), G: Go(작동 시작), D: Done(완료)
+
+void setup() {
+  pinMode(solPin, OUTPUT);
+  digitalWrite(solPin, LOW); // 처음에는 꺼진 상태
+
+  Wire.begin(10);               // 슬레이브 주소 10번
+  Wire.onReceive(receiveEvent); // 마스터 명령 수신
+  Wire.onRequest(requestEvent); // 마스터에게 상태 보고
+  
+  Serial.begin(115200);
+  Serial.println("Solenoid Slave Ready.");
+}
+
+void loop() {
+  // 마스터로부터 'G' 명령을 받으면 작동 시작
+  if (status == 'G') {
+    Serial.println("Solenoid PULL (ON)");
+    digitalWrite(solPin, HIGH); // 솔레노이드 당기기
+    
+    delay(500); // 0.5초 동안 유지 (기계적 동작 시간)
+    
+    Serial.println("Solenoid RELEASE (OFF)");
+    digitalWrite(solPin, LOW);  // 솔레노이드 놓기
+    
+    status = 'D'; // 동작 완료 상태로 변경
+    Serial.println("Solenoid Task Done.");
+  }
+}
+
+// 마스터가 데이터를 보낼 때 호출 (명령 수신)
+void receiveEvent(int howMany) {
+  if (Wire.available()) {
+    char c = Wire.read();
+    // 'G'면 작동 시작, 'I'면 다시 대기 상태로 리셋
+    if (c == 'G' || c == 'I') {
+      status = c;
+    }
+  }
+}
+
+// 마스터가 데이터를 요청할 때 호출 (상태 보고)
+void requestEvent() {
+  Wire.write(status);
+}
