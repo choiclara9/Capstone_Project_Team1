@@ -1,0 +1,152 @@
+//마스터 수정코드 리니어 초기화 초반부 포함
+
+#include <Wire.h>
+#include <AccelStepper.h>
+
+// ----- 스테퍼 모터 핀 설정 -----
+// Stepper 1: Step(5), Dir(6)
+AccelStepper stepper1(1, 5, 6); 
+// Stepper 2: Step(9), Dir(10)
+AccelStepper stepper2(1, 9, 10); 
+
+// ----- 슬레이브 주소 설정 -----
+#define ADDR_LINEAR 9
+#define ADDR_SERVO 8
+#define ADDR_SOLENOID 10
+
+// ----- 스테퍼 2 구동 설정 -----
+const long midpoint = 44000;  // 솔레노이드 작동 지점
+const long endpoint = 88000; // 최종 도착 지점
+
+// 함수 선언
+bool sendCommandAndWait(int addr, char cmd);
+void resetAllSlaves();
+
+void setup() {
+  Wire.begin();
+  Serial.begin(115200);
+
+  // --- 스테퍼 1 설정 ---
+  stepper1.setMaxSpeed(1000);
+  stepper1.setAcceleration(500);
+  stepper1.setPinsInverted(true, true, false); 
+
+  // --- 스테퍼 2 설정 ---
+  stepper2.setMaxSpeed(1000);
+  stepper2.setAcceleration(500);
+  stepper2.setPinsInverted(true, true, false); 
+
+  // 💡 [핵심 추가] 시스템 켜지자마자 리니어 액추에이터 초기화 구동 및 대기
+  Serial.println("System Initialization: Homing Linear Actuator...");
+  if (sendCommandAndWait(ADDR_LINEAR, 'I')) {
+    Serial.println("--> Linear Actuator Position Initialized Successfully!");
+  } else {
+    Serial.println("--> [Warning] Linear Actuator Init Failed.");
+  }
+
+  delay(500);
+  Serial.println("System Ready. Enter Height:");
+}
+
+void loop() {
+  if (Serial.available()) {
+    long height = Serial.parseInt(); 
+    if (height == 0) return; 
+    
+    Serial.print("Height Received: "); Serial.println(height);
+    
+    // [Step 1] Stepper 1 구동
+    Serial.println("Step 1: Stepper 1 Moving...");
+    stepper1.moveTo(height); 
+    while (stepper1.distanceToGo() != 0) {
+      stepper1.run();
+    }
+    delay(500);
+
+    // [Step 2] 리니어 액추에이터: 구동 및 대기
+    Serial.println("Step 2: Linear Actuator Moving...");
+    if(sendCommandAndWait(ADDR_LINEAR, 'G')) {
+        
+        // [Step 3] 서보모터: 구동 및 대기
+        Serial.println("Step 3: Servos Moving...");
+        if(sendCommandAndWait(ADDR_SERVO, 'G')) {
+            
+            // [Step 4] Stepper 2 중간 지점 이동 & 리니어 초기화 동시 진행
+            Serial.println("Step 4: Stepper 2 Moving to Midpoint & Resetting Linear...");
+            stepper2.moveTo(midpoint); 
+
+            // 스테퍼 모터가 돌기 직전에 리니어 액추에이터로 'I' 신호 발송
+            Wire.beginTransmission(ADDR_LINEAR);
+            Wire.write('I');
+            Wire.endTransmission();
+
+            // 리니어가 초기화되는 동안 스테퍼 2는 중간 지점으로 이동
+            while (stepper2.distanceToGo() != 0) {
+              stepper2.run();
+            }
+
+            // [Step 5] 솔레노이드 작동
+            Serial.println("Step 5: Solenoid Active!");
+            Wire.beginTransmission(ADDR_SOLENOID);
+            Wire.write('G');
+            Wire.endTransmission();
+            delay(1000);
+
+            // [Step 6] Stepper 2 최종 목적지 이동
+            Serial.println("Step 6: Stepper 2 Moving to Endpoint...");
+            stepper2.moveTo(endpoint); 
+            while (stepper2.distanceToGo() != 0) {
+              stepper2.run();
+            }
+
+            // [Step 7] 전체 완료 및 슬레이브 리셋
+            Serial.println("Step 7: All Sequence Done. Resetting Slaves and Homing Steppers...");
+            resetAllSlaves(); 
+            
+            // 모터를 물리적으로 맨 처음 위치(0)로 돌려보냄
+            stepper2.moveTo(0);
+            
+            // 두 모터가 모두 0 위치에 도달할 때까지 회전
+            while (stepper2.distanceToGo() != 0) {
+              stepper2.run();
+            }
+            
+            // 원점 복귀 완료 후 내부 좌표를 0으로 확실히 초기화
+            stepper2.setCurrentPosition(0);
+        }
+    }
+    Serial.println("\n--- Cycle Finished. Waiting for next height ---");
+  }
+}
+
+// 슬레이브 상태 확인 함수
+bool sendCommandAndWait(int addr, char cmd) {
+  Wire.beginTransmission(addr);
+  Wire.write(cmd);
+  Wire.endTransmission();
+
+  delay(200); 
+
+  while (true) {
+    Wire.requestFrom(addr, 1);
+    if (Wire.available()) {
+      char s = Wire.read();
+      if (s == 'D') {
+        delay(100); 
+        return true; 
+      }
+    }
+    delay(50);
+  }
+}
+
+// 모든 슬레이브 리셋 함수
+void resetAllSlaves() {
+  int addrs[] = {ADDR_LINEAR, ADDR_SERVO, ADDR_SOLENOID};
+  for (int i = 0; i < 3; i++) {
+    Wire.beginTransmission(addrs[i]);
+    Wire.write('I'); 
+    Wire.endTransmission();
+    delay(10);
+  }
+}
