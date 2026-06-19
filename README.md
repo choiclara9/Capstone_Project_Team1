@@ -1,1 +1,17 @@
-You can download YOLO pose weights in https://drive.google.com/file/d/1_1Z2NQCUeRIQLwXkWiR4Li24SDdPqN_a/view?usp=sharing
+본 저장소는 졸업프로젝트 하드웨어 제어 및 AI 비전 측정 코드를 포함하고 있습니다. 
+각 파트별 코드는 용도에 맞게 브랜치로 나뉘어 관리되고 있습니다. 코드를 확인하시려면 상단의 브랜치 선택 메뉴를 이용해 주세요.
+
+## 저장소 구조 (Branches)
+
+이 저장소는 크게 3개의 브랜치로 구성되어 있습니다.
+
+* **`main`**: 현재 보고 계신 기본 브랜치입니다. 프로젝트의 전반적인 설명(README)을 포함합니다.
+* **`Arduino`**: 하드웨어 제어를 위한 아두이노(Arduino) 코드가 들어있는 브랜치입니다.
+* **`YOLO-Pose`**: YOLO-Pose 기반의 리드스크류 타겟 산출 및 카메라 캘리브레이션 파이썬(Python) 코드가 들어있는 브랜치입니다.
+
+## YOLO-Pose 모델 가중치 (Weights) 다운로드
+
+YOLO-Pose 학습이 완료된 최고 성능 모델 가중치(`best.pt`) 파일은 용량 문제로 깃허브에 직접 업로드하지 않고, 외부 드라이브 링크로 공유합니다. 
+AI 추론 코드를 실행하시려면 아래 링크에서 가중치 파일을 다운로드하여 사용해 주세요.
+
+* **[YOLO-Pose 가중치 파일 다운로드 (Google Drive)](https://drive.google.com/file/d/1_1Z2NQCUeRIQLwXkWiR4Li24SDdPqN_a/view?usp=sharing)**
